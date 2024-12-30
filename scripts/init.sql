@@ -1,9 +1,9 @@
-CREATE TABLE IF NOT EXISTS "user" (
+CREATE TABLE IF NOT EXISTS "users" (
     "login" text NOT NULL UNIQUE,
     "pwd" text NOT NULL,
-    "createdAt" bigint NOT NULL default EXTRACT(EPOCH FROM now()),
-    "updatedAt" timestamptz,
-    "deletedAt" timestamptz,
+    "created_at" bigint NOT NULL default EXTRACT(EPOCH FROM now()), -- unix timestamp in sec
+    "updated_at" bigint, -- unix timestamp in sec
+    "deleted_at" bigint, -- unix timestamp in sec
     PRIMARY KEY ("login")
 );
 
@@ -12,12 +12,12 @@ CREATE TABLE IF NOT EXISTS "files" (
     "user_login" text NOT NULL,
     "content_type" text,
     "data" bytea,
-    "createdAt" bigint NOT NULL default EXTRACT(EPOCH FROM now()),
-    "updatedAt" timestamptz,
-    "deletedAt" timestamptz,
+    "created_at" bigint NOT NULL default EXTRACT(EPOCH FROM now()), -- unix timestamp in sec
+    "updated_at" bigint, -- unix timestamp in sec
+    "deleted_at" bigint, -- unix timestamp in sec
     PRIMARY KEY ("asset_id", "user_login"),
-    CONSTRAINT fk_user_login FOREIGN KEY ("user_login") REFERENCES "user"("login")
+    CONSTRAINT fk_user_login FOREIGN KEY ("user_login") REFERENCES "users"("login")
 );
 
 -- password: secret
-insert into "user" values ('alice', '$2a$04$zkIAKg6l2DAuOMDDkRI9wuK43PjfONy41pgFqI6m8P2lueM13Rg1i') on conflict do nothing ;
+insert into "users" values ('alice', '$2a$04$zkIAKg6l2DAuOMDDkRI9wuK43PjfONy41pgFqI6m8P2lueM13Rg1i') on conflict do nothing ;
