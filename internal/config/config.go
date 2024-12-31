@@ -1,7 +1,7 @@
 package config
 
 import (
-	"errors"
+	"clearway-test-task/pkg/validator"
 	"fmt"
 	"time"
 )
@@ -63,9 +63,9 @@ func New() (Config, error) {
 		return Config{}, fmt.Errorf("config unmarshalling error: %w", err)
 	}
 
-	err = validate(c)
+	err = validator.ValInstance.ValidateStruct(c)
 	if err != nil {
-		return Config{}, fmt.Errorf("config validation error: %w", errors.New(handleValidatorError(c, err)))
+		return Config{}, err
 	}
 
 	return c, nil

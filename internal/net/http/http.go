@@ -3,7 +3,8 @@ package http
 import (
 	"clearway-test-task/internal/net/http/handlers/assetHandlers"
 	"clearway-test-task/internal/net/http/handlers/authHandlers"
-	"clearway-test-task/internal/net/http/middleware"
+	"clearway-test-task/internal/net/http/middleware/authMiddleware"
+	"clearway-test-task/internal/net/http/middleware/logMiddleware"
 	"clearway-test-task/internal/storage"
 	"context"
 	"log/slog"
@@ -16,7 +17,11 @@ type HttpServer struct {
 	timeout time.Duration
 }
 
-func NewHttpServer(host, port string, ReadTimeout, WriteTimeout, IdleTimeout time.Duration, auth storage.Auth, db storage.Db, loggerForHandlers func() *slog.Logger) *HttpServer {
+func NewHttpServer(host, port string, ReadTimeout, WriteTimeout, IdleTimeout time.Duration,
+	ValidateToken func(token string) (string, error),
+	GetToken func(ctx context.Context, login string, password string) (string, int64, error),
+	loggerForHandlers func() *slog.Logger,
+	db storage.Db) *HttpServer {
 	svr := &HttpServer{
 		svr: &http.Server{
 			Addr:         host + ":" + port,
@@ -27,36 +32,21 @@ func NewHttpServer(host, port string, ReadTimeout, WriteTimeout, IdleTimeout tim
 		timeout: ReadTimeout,
 	}
 
-	http.HandleFunc("POST /auth", authHandlers.BasicAuthPost(auth, loggerForHandlers))
+	assetH := assetHandlers.NewAssetHandler(db)
+	authH := authHandlers.NewAuthHandler(GetToken)
 
-	initAsserHandlers(db, loggerForHandlers, auth)
+	authM := authMiddleware.NewAuthMiddleware(ValidateToken)
+
+	AssetGet := logMiddleware.NewLoggerMiddleware(loggerForHandlers, authM.WithBasicAuth(assetH.AssetGet()))
+	AssetPost := logMiddleware.NewLoggerMiddleware(loggerForHandlers, authM.WithBasicAuth(assetH.AssetPost()))
+	AssetDelete := logMiddleware.NewLoggerMiddleware(loggerForHandlers, authM.WithBasicAuth(assetH.AssetDelete()))
+
+	AuthPost := logMiddleware.NewLoggerMiddleware(loggerForHandlers, authH.AuthPost())
+
+	assetHandlers.RegAssetHandlers(AssetGet.Handle(), AssetPost.Handle(), AssetDelete.Handle())
+	authHandlers.RegAuthHandlers(AuthPost.Handle())
 
 	return svr
-}
-
-func initAsserHandlers(db storage.Db, loggerForHandlers func() *slog.Logger, auth storage.Auth) {
-	aH := assetHandlers.NewAssetHandler(db)
-	http.Handle("GET /asset/{assetName}",
-		middleware.WithMiddleware(
-			aH.AssetGet(),
-			auth.ValidateToken,
-			loggerForHandlers,
-		),
-	)
-	http.Handle("POST /asset/{assetName}",
-		middleware.WithMiddleware(
-			aH.AssetPost(),
-			auth.ValidateToken,
-			loggerForHandlers,
-		),
-	)
-	http.Handle("DELETE /asset/{assetName}",
-		middleware.WithMiddleware(
-			aH.AssetDelete(),
-			auth.ValidateToken,
-			loggerForHandlers,
-		),
-	)
 }
 
 func (s *HttpServer) Close(lg *slog.Logger) error {

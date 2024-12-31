@@ -30,7 +30,7 @@ func main() {
 	defer func() { _ = db.Close(lg) }()
 	defer func() { _ = auth.Close() }()
 
-	svr := myinit.Net(cfg, auth, db, lg)
+	svr := myinit.Net(cfg, auth.ValidateToken, auth.GetToken, db, lg)
 	lg.Debug("http init success")
 	defer func() { _ = svr.Close(lg) }()
 

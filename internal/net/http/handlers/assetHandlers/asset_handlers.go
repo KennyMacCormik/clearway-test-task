@@ -2,11 +2,12 @@ package assetHandlers
 
 import (
 	myerrors "clearway-test-task/internal/errors"
-	"clearway-test-task/internal/net/http/middleware"
+	"clearway-test-task/internal/net/http/middleware/authMiddleware"
+	"clearway-test-task/internal/net/http/middleware/logMiddleware"
 	"clearway-test-task/internal/storage"
+	"clearway-test-task/pkg/validator"
 	"errors"
 	"fmt"
-	"github.com/go-playground/validator/v10"
 	"io"
 	"net/http"
 )
@@ -23,11 +24,17 @@ func NewAssetHandler(db storage.Db) *AssetHandler {
 	}
 }
 
+func RegAssetHandlers(get http.Handler, post http.Handler, del http.Handler) {
+	http.Handle("GET /asset/{assetName}", get)
+	http.Handle("POST /asset/{assetName}", post)
+	http.Handle("DELETE /asset/{assetName}", del)
+}
+
 func (a *AssetHandler) AssetDelete() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = r.Body.Close() }()
 		const fn string = "AssetDelete"
-		lg := middleware.SetupLoggerFromContext(fn, r)
+		lg := logMiddleware.SetupLoggerFromContext(fn, r)
 
 		assetName, login, err := getAssetNameAndLogin(r)
 		if err != nil {
@@ -54,7 +61,7 @@ func (a *AssetHandler) AssetPost() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = r.Body.Close() }()
 		const fn string = "AssetPost"
-		lg := middleware.SetupLoggerFromContext(fn, r)
+		lg := logMiddleware.SetupLoggerFromContext(fn, r)
 
 		assetName, login, err := getAssetNameAndLogin(r)
 		if err != nil {
@@ -86,7 +93,7 @@ func (a *AssetHandler) AssetPost() http.Handler {
 func (a *AssetHandler) AssetGet() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		const fn string = "AssetGet"
-		lg := middleware.SetupLoggerFromContext(fn, r)
+		lg := logMiddleware.SetupLoggerFromContext(fn, r)
 
 		assetName, login, err := getAssetNameAndLogin(r)
 		if err != nil {
@@ -127,20 +134,12 @@ func (a *AssetHandler) AssetGet() http.Handler {
 
 func getAssetNameAndLogin(r *http.Request) (string, string, error) {
 	assetName := r.PathValue("assetName")
-	if err := validateAssetName(assetName); err != nil {
+	if err := validator.ValInstance.ValidateWithTag(assetName, assetNameValidationTag); err != nil {
 		return "", "", fmt.Errorf("invalid asset name: %w", err)
 	}
-	login, ok := middleware.GetLoginFromContext(r.Context())
+	login, ok := authMiddleware.GetLoginFromContext(r.Context())
 	if !ok {
 		return "", "", myerrors.NewNotFoundError("login not found")
 	}
 	return assetName, login, nil
-}
-
-func validateAssetName(assetName string) error {
-	val := validator.New(validator.WithRequiredStructEnabled())
-	if err := val.Var(assetName, assetNameValidationTag); err != nil {
-		return fmt.Errorf("assetName validation failed: %w", errors.New("expected match regex '/(\\w+)/g'"))
-	}
-	return nil
 }

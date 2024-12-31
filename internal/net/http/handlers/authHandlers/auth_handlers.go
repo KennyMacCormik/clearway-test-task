@@ -2,12 +2,11 @@ package authHandlers
 
 import (
 	myerrors "clearway-test-task/internal/errors"
-	"clearway-test-task/internal/net/http/middleware"
-	"clearway-test-task/internal/storage"
+	"clearway-test-task/internal/net/http/middleware/logMiddleware"
 	"clearway-test-task/pkg"
+	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 )
 
@@ -17,10 +16,25 @@ type token struct {
 	TokenType   string `json:"token_type"`
 }
 
-func BasicAuthPost(auth storage.Auth, loggerForHandlers func() *slog.Logger) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+type AuthHandler struct {
+	getToken func(ctx context.Context, login string, password string) (string, int64, error)
+}
+
+func NewAuthHandler(GetToken func(ctx context.Context, login string,
+	password string) (string, int64, error)) *AuthHandler {
+	return &AuthHandler{
+		getToken: GetToken,
+	}
+}
+
+func RegAuthHandlers(post http.Handler) {
+	http.Handle("POST /auth", post)
+}
+
+func (a *AuthHandler) AuthPost() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		const fn string = "BasicAuthPost"
-		lg := middleware.SetupLoggerFromFunc(fn, r, loggerForHandlers)
+		lg := logMiddleware.SetupLoggerFromContext(fn, r)
 		var res token
 		l, p, ok := r.BasicAuth()
 		if !ok {
@@ -29,7 +43,7 @@ func BasicAuthPost(auth storage.Auth, loggerForHandlers func() *slog.Logger) fun
 			return
 		}
 
-		t, exp, err := auth.GetToken(r.Context(), l, p)
+		t, exp, err := a.getToken(r.Context(), l, p)
 		if err != nil {
 			var userErr myerrors.ErrUserNotFound
 			if errors.As(err, &userErr) {
@@ -55,5 +69,5 @@ func BasicAuthPost(auth storage.Auth, loggerForHandlers func() *slog.Logger) fun
 			return
 		}
 		lg.Info("success", "Login", l)
-	}
+	})
 }

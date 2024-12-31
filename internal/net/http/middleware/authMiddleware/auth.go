@@ -1,40 +1,46 @@
-package middleware
+package authMiddleware
 
 import (
+	"clearway-test-task/internal/net/http/middleware/logMiddleware"
 	"clearway-test-task/pkg"
+	"clearway-test-task/pkg/validator"
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 )
 
 const validateTokenTag string = "jwt"
-const userKey string = "user"
-const loggerKey string = "logger"
+const UserKey string = "user"
 
-func WithMiddleware(next http.Handler, validateToken func(token string) (string, error), loggerForHandlers func() *slog.Logger) http.Handler {
+type AuthMiddleware struct {
+	validateToken func(token string) (string, error)
+}
+
+func NewAuthMiddleware(validateToken func(token string) (string, error)) *AuthMiddleware {
+	return &AuthMiddleware{validateToken: validateToken}
+}
+
+func (a *AuthMiddleware) WithBasicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		const fn string = "WithAuth"
-		lg := WithHttpData(r, loggerForHandlers())
-		newLg := lg.With("func", fn)
+		lg := logMiddleware.SetupLoggerFromContext(fn, r)
 
 		token, err := getTokenFromRequest(r)
 		if err != nil {
-			newLg.Error("token error", "error", err)
+			lg.Error("token error", "error", err)
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
 
-		uid, err := validateToken(token)
+		uid, err := a.validateToken(token)
 		if err != nil {
-			newLg.Error("authorization error", "error", err)
+			lg.Error("authorization error", "error", err)
 			http.Error(w, "", http.StatusUnauthorized)
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), userKey, uid)
-		ctx = context.WithValue(ctx, loggerKey, lg)
+		ctx := context.WithValue(r.Context(), UserKey, uid)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -57,7 +63,7 @@ func getTokenFromRequest(r *http.Request) (string, error) {
 		return "", errors.New("error decoding token from base64")
 	}
 
-	err := pkg.ValidateWithTag(token, validateTokenTag)
+	err := validator.ValInstance.ValidateWithTag(token, validateTokenTag)
 	if err != nil {
 		return "", err
 	}
@@ -66,12 +72,6 @@ func getTokenFromRequest(r *http.Request) (string, error) {
 
 // GetLoginFromContext retrieves the user ID from the request context
 func GetLoginFromContext(ctx context.Context) (string, bool) {
-	userID, ok := ctx.Value(userKey).(string)
+	userID, ok := ctx.Value(UserKey).(string)
 	return userID, ok
-}
-
-// GetLoggerFromContext retrieves the *slog.Logger from the request context
-func GetLoggerFromContext(ctx context.Context) (*slog.Logger, bool) {
-	lg, ok := ctx.Value(loggerKey).(*slog.Logger)
-	return lg, ok
 }

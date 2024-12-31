@@ -18,33 +18,34 @@ const queryGetUserPwdHash = `
 `
 const queryGetDataByAssetName = `
     SELECT data, content_type FROM "files" 
-    WHERE asset_name = $1 AND user_login = $2 AND deleted_at is NULL;
+    WHERE asset_name = $1 AND user_login = $2 AND deleted_at =0;
 `
 const querySetDataByAssetName = `
     INSERT INTO "files" (asset_name, user_login, content_type, data, created_at)
     VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM NOW()))
-    ON CONFLICT (asset_name, user_login)
-    WHERE deleted_at IS NULL
+    ON CONFLICT (asset_name, user_login, deleted_at)
+    WHERE deleted_at = 0
     DO UPDATE SET 
         content_type = EXCLUDED.content_type,
         data = EXCLUDED.data,
-        updated_at = EXCLUDED.created_at;
+        updated_at = EXCLUDED.created_at,
+		deleted_at = 0;
 `
 const queryDeleteDataByAssetName = `
     UPDATE "files"
     SET deleted_at = EXTRACT(EPOCH FROM NOW())
-    WHERE asset_name = $1 AND user_login = $2 AND deleted_at is NULL;
+    WHERE asset_name = $1 AND user_login = $2 AND deleted_at =0;
 `
 
 const queryGetActiveSession = `
     SELECT user_login, token, exp FROM "sessions"
-    WHERE deleted_at is NULL;
+    WHERE deleted_at =0;
 `
 
 const querySetSessionUpdate = `
     UPDATE "sessions"
 	SET deleted_at = EXTRACT(EPOCH FROM NOW())
-	WHERE user_login = $1 AND deleted_at IS NULL;
+	WHERE user_login = $1 AND deleted_at =0;
 `
 
 const querySetSessionInsert = `
@@ -55,7 +56,7 @@ const querySetSessionInsert = `
 const queryDeleteSessionByLogin = `
     UPDATE "sessions"
     SET deleted_at = EXTRACT(EPOCH FROM NOW())
-    WHERE user_login = $1 AND deleted_at is NULL;
+    WHERE user_login = $1 AND deleted_at =0;
 `
 
 type Db struct {
