@@ -3,7 +3,7 @@ package http
 import (
 	"clearway-test-task/internal/net/http/handlers/assetHandlers"
 	"clearway-test-task/internal/net/http/handlers/authHandlers"
-	"clearway-test-task/internal/net/http/middleware/authMiddleware"
+	"clearway-test-task/internal/net/http/middleware"
 	"clearway-test-task/internal/storage"
 	"context"
 	"log/slog"
@@ -28,22 +28,35 @@ func NewHttpServer(host, port string, ReadTimeout, WriteTimeout, IdleTimeout tim
 	}
 
 	http.HandleFunc("POST /auth", authHandlers.BasicAuthPost(auth, loggerForHandlers))
+
+	initAsserHandlers(db, loggerForHandlers, auth)
+
+	return svr
+}
+
+func initAsserHandlers(db storage.Db, loggerForHandlers func() *slog.Logger, auth storage.Auth) {
+	aH := assetHandlers.NewAssetHandler(db)
 	http.Handle("GET /asset/{assetName}",
-		authMiddleware.WithAuth(
-			assetHandlers.AssetGet(db),
+		middleware.WithMiddleware(
+			aH.AssetGet(),
 			auth.ValidateToken,
 			loggerForHandlers,
 		),
 	)
 	http.Handle("POST /asset/{assetName}",
-		authMiddleware.WithAuth(
-			assetHandlers.AssetPost(db),
+		middleware.WithMiddleware(
+			aH.AssetPost(),
 			auth.ValidateToken,
 			loggerForHandlers,
 		),
 	)
-
-	return svr
+	http.Handle("DELETE /asset/{assetName}",
+		middleware.WithMiddleware(
+			aH.AssetDelete(),
+			auth.ValidateToken,
+			loggerForHandlers,
+		),
+	)
 }
 
 func (s *HttpServer) Close(lg *slog.Logger) error {

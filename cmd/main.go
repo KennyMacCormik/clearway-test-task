@@ -21,14 +21,14 @@ func main() {
 	lg := myinit.Logger(cfg)
 	lg.Debug("logger init success")
 
-	db, auth, err := myinit.Storage(cfg)
+	db, auth, err := myinit.Storage(cfg, lg)
 	if err != nil {
 		lg.Error("db init error", "error", err.Error())
 		os.Exit(errExit)
 	}
 	lg.Debug("db init success")
 	defer func() { _ = db.Close(lg) }()
-	defer func() { _ = auth.Close(lg) }()
+	defer func() { _ = auth.Close() }()
 
 	svr := myinit.Net(cfg, auth, db, lg)
 	lg.Debug("http init success")

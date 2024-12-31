@@ -44,6 +44,8 @@ type Db struct {
 	ConnMaxIdle int `mapstructure:"db_conn_max_idle" validate:"min=1,max=1000"`
 	// DB_CONN_MAX_REUSE. The maximum amount of time a connection may be reused. Default to 1 s
 	ConnMaxReuse time.Duration `mapstructure:"db_conn_max_reuse" validate:"min=10ms,max=1h"`
+	// DB_DELETE_SESSION_TIMEOUT. The maximum for delete request to run on cache cleaner. Default to 100 ms
+	DeleteSessionTimeout time.Duration `mapstructure:"db_delete_session_timeout" validate:"min=10ms,max=1s"`
 }
 
 type Config struct {

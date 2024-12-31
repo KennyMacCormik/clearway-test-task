@@ -1,6 +1,7 @@
 package authStorage
 
 import (
+	myerrors "clearway-test-task/internal/errors"
 	"clearway-test-task/internal/storage"
 	"clearway-test-task/pkg"
 	"context"
@@ -13,10 +14,11 @@ import (
 )
 
 type AuthStorage struct {
-	db storage.Db
-	pv storage.PasswordValidator
+	db                   storage.Db
+	DeleteSessionTimeout time.Duration
+	pv                   storage.PasswordValidator
 	// sync.Map will be better at large request amount
-	cache map[string]token
+	cache map[string]storage.Token
 	// RW mutex because each request checks token
 	cacheMtx    sync.RWMutex
 	cacheTicker *time.Ticker
@@ -24,25 +26,35 @@ type AuthStorage struct {
 	once        sync.Once
 	tokenTTL    time.Duration
 	hmacSecret  string
+	lg          *slog.Logger
 }
 
-type token struct {
-	Token    string
-	ExpireAt int64
-}
-
-func NewAuthStorage(db storage.Db, validator storage.PasswordValidator, cacheCleanupInterval time.Duration, tokenTTL time.Duration, hmacSecret string) *AuthStorage {
+func NewAuthStorage(db storage.Db, DeleteSessionTimeout time.Duration, validator storage.PasswordValidator, cacheCleanupInterval time.Duration, tokenTTL time.Duration, hmacSecret string, lg *slog.Logger) *AuthStorage {
 	st := &AuthStorage{
-		db:          db,
-		pv:          validator,
-		cache:       make(map[string]token),
-		cacheTicker: time.NewTicker(cacheCleanupInterval),
-		closer:      make(chan struct{}),
-		tokenTTL:    tokenTTL,
-		hmacSecret:  hmacSecret,
+		db:                   db,
+		DeleteSessionTimeout: DeleteSessionTimeout,
+		pv:                   validator,
+		cache:                make(map[string]storage.Token),
+		cacheTicker:          time.NewTicker(cacheCleanupInterval),
+		closer:               make(chan struct{}),
+		tokenTTL:             tokenTTL,
+		hmacSecret:           hmacSecret,
+		lg:                   lg,
+	}
+	cache, err := loadCache(db, DeleteSessionTimeout)
+	if err != nil {
+		st.lg.Error("failed to load the cache", "error", err)
+	} else {
+		st.cache = cache
 	}
 	go st.cacheCleaner()
 	return st
+}
+
+func loadCache(db storage.Db, DeleteSessionTimeout time.Duration) (map[string]storage.Token, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), DeleteSessionTimeout)
+	defer cancel()
+	return db.GetActiveSessions(ctx)
 }
 
 func (a *AuthStorage) auth(ctx context.Context, login, password string) error {
@@ -52,7 +64,7 @@ func (a *AuthStorage) auth(ctx context.Context, login, password string) error {
 	}
 
 	if err = a.pv.Validate(hash, password); err != nil {
-		return fmt.Errorf("%w: invalid credentials: %w", pkg.ErrNotFound, err)
+		return fmt.Errorf("%w: invalid credentials: %w", myerrors.ErrNotFound, err)
 	}
 
 	return nil
@@ -75,21 +87,22 @@ func (a *AuthStorage) GetToken(ctx context.Context, login, password string) (str
 	if err != nil {
 		return "", 0, err
 	}
-	base64Token := pkg.Base64Encode(signedToken)
 
-	a.cacheMtx.Lock()
-	a.cache[login] = token{Token: base64Token, ExpireAt: exp}
-	a.cacheMtx.Unlock()
+	if err = a.db.UpdateSession(ctx, login, signedToken, iat, exp); err != nil {
+		return "", 0, err
+	}
+	a.setTokenWithLock(login, signedToken, exp)
 
-	return base64Token, exp, nil
+	return signedToken, exp, nil
 }
 
-func (a *AuthStorage) ValidateToken(base64EncToken string) (string, error) {
-	// decode token
-	decToken, err := decodeToken(base64EncToken)
-	if err != nil {
-		return "", err
-	}
+func (a *AuthStorage) setTokenWithLock(login, signedToken string, exp int64) {
+	a.cacheMtx.Lock()
+	defer a.cacheMtx.Unlock()
+	a.cache[login] = storage.Token{Token: signedToken, ExpireAt: exp}
+}
+
+func (a *AuthStorage) ValidateToken(decToken string) (string, error) {
 	// validate token
 	tkn, err := a.validateToken(decToken)
 	if err != nil {
@@ -120,13 +133,6 @@ func (a *AuthStorage) validateCache(login, decToken string) error {
 	return nil
 }
 
-func decodeToken(base64EncToken string) (string, error) {
-	decToken := pkg.Base64Decode(base64EncToken)
-	if decToken == "" || decToken == " " {
-		return "", errors.New("token is empty")
-	}
-	return decToken, nil
-}
 func (a *AuthStorage) validateToken(decToken string) (*jwt.Token, error) {
 	tkn, err := jwt.Parse(decToken, func(tkn *jwt.Token) (interface{}, error) {
 		if _, ok := tkn.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -174,19 +180,19 @@ func (a *AuthStorage) validateClaims(claims jwt.MapClaims) error {
 	return nil
 }
 
-func (a *AuthStorage) getCachedTokenWithRLock(login string) (token, bool) {
+func (a *AuthStorage) getCachedTokenWithRLock(login string) (storage.Token, bool) {
 	a.cacheMtx.RLock()
 	defer a.cacheMtx.RUnlock()
 	cachedToken, ok := a.cache[login]
 	return cachedToken, ok
 }
 
-func (a *AuthStorage) Close(lg *slog.Logger) error {
+func (a *AuthStorage) Close() error {
 	a.once.Do(func() {
 		close(a.closer)
 		a.cacheTicker.Stop()
 	})
-	lg.Debug("auth cache closed")
+	a.lg.Debug("auth cache closed")
 	return nil
 }
 
@@ -198,6 +204,11 @@ func (a *AuthStorage) cacheCleaner() {
 			for login, tkn := range a.cache {
 				if time.Now().Unix() > tkn.ExpireAt {
 					a.cacheMtx.RUnlock()
+					err := a.deleteExpiredSessionFromDb(login)
+					if err != nil {
+						a.lg.Error("failed to delete expired session from db", "error", err)
+						continue
+					}
 					a.cacheMtx.Lock()
 					delete(a.cache, login)
 					a.cacheMtx.Unlock()
@@ -209,4 +220,10 @@ func (a *AuthStorage) cacheCleaner() {
 			return
 		}
 	}
+}
+
+func (a *AuthStorage) deleteExpiredSessionFromDb(login string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), a.DeleteSessionTimeout)
+	defer cancel()
+	return a.db.DeleteSessionByLogin(ctx, login)
 }

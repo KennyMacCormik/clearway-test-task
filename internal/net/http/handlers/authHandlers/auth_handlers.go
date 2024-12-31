@@ -1,6 +1,8 @@
 package authHandlers
 
 import (
+	myerrors "clearway-test-task/internal/errors"
+	"clearway-test-task/internal/net/http/middleware"
 	"clearway-test-task/internal/storage"
 	"clearway-test-task/pkg"
 	"encoding/json"
@@ -17,35 +19,41 @@ type token struct {
 
 func BasicAuthPost(auth storage.Auth, loggerForHandlers func() *slog.Logger) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		lg := loggerForHandlers()
+		const fn string = "BasicAuthPost"
+		lg := middleware.SetupLoggerFromFunc(fn, r, loggerForHandlers)
 		var res token
 		l, p, ok := r.BasicAuth()
 		if !ok {
-			lg.Error("BasicAuthPost basic auth required", "error", "basic auth required")
+			lg.Error("basic auth required", "error", "basic auth required")
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
 
 		t, exp, err := auth.GetToken(r.Context(), l, p)
 		if err != nil {
-			if errors.Is(err, pkg.ErrNotFound) {
-				lg.Error("BasicAuthPost auth error", "error", err)
-				http.Error(w, "", http.StatusUnauthorized)
+			var userErr myerrors.ErrUserNotFound
+			if errors.As(err, &userErr) {
+				lg.Error("auth error",
+					"error", err,
+					"Login", userErr.Login,
+				)
+				http.Error(w, "", http.StatusNotFound)
 				return
 			}
-			lg.Error("BasicAuthPost failed to get auth token", "error", err)
+			lg.Error("failed to get auth token", "error", err)
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
-		res.AccessToken = t
+		res.AccessToken = pkg.Base64Encode(t)
 		res.ExpiresIn = exp
 		res.TokenType = "Bearer"
 
 		w.Header().Set("Content-Type", "application/json")
 		if err = json.NewEncoder(w).Encode(res); err != nil {
-			lg.Error("BasicAuthPost error writing response", "error", err)
+			lg.Error("error writing response", "error", err)
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
+		lg.Info("success", "Login", l)
 	}
 }

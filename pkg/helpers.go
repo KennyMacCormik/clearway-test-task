@@ -2,22 +2,14 @@ package pkg
 
 import (
 	"encoding/base64"
-	"errors"
 	"fmt"
+	"github.com/go-playground/validator/v10"
 	"log/slog"
 	"os"
 	"unsafe"
 )
 
 const defaultLogLevel = 0 // info
-
-// ErrNotFound is a sentinel error to indicate resource not found.
-var ErrNotFound = errors.New("resource not found")
-
-// NewNotFoundError creates a formatted not-found error.
-func NewNotFoundError(resource string) error {
-	return fmt.Errorf("%w: %s", ErrNotFound, resource)
-}
 
 func ConvertStrToBytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
@@ -47,5 +39,14 @@ func DefaultLogger() *slog.Logger {
 	var logLevel = new(slog.LevelVar)
 	logLevel.Set(defaultLogLevel)
 
-	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
+}
+
+// TODO: make global object
+func ValidateWithTag(variable any, tag string) error {
+	val := validator.New(validator.WithRequiredStructEnabled())
+	if err := val.Var(variable, tag); err != nil {
+		return fmt.Errorf("validation error: var %s: tag %s", variable, tag)
+	}
+	return nil
 }

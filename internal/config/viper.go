@@ -50,6 +50,9 @@ func setDbEnv() {
 
 	viper.SetDefault("db_conn_max_reuse", "1s")
 	_ = viper.BindEnv("db_conn_max_reuse")
+
+	viper.SetDefault("db_delete_session_timeout", "100ms")
+	_ = viper.BindEnv("db_delete_session_timeout")
 }
 
 func loadEnv(c *Config) error {

@@ -1,9 +1,9 @@
 package assetHandlers
 
 import (
-	"clearway-test-task/internal/net/http/middleware/authMiddleware"
+	myerrors "clearway-test-task/internal/errors"
+	"clearway-test-task/internal/net/http/middleware"
 	"clearway-test-task/internal/storage"
-	"clearway-test-task/pkg"
 	"errors"
 	"fmt"
 	"github.com/go-playground/validator/v10"
@@ -13,59 +13,100 @@ import (
 
 const assetNameValidationTag = "alphanum"
 
-func AssetPost(db storage.Db) http.Handler {
+type AssetHandler struct {
+	db storage.Db
+}
+
+func NewAssetHandler(db storage.Db) *AssetHandler {
+	return &AssetHandler{
+		db: db,
+	}
+}
+
+func (a *AssetHandler) AssetDelete() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = r.Body.Close() }()
-		lg, ok := authMiddleware.GetLoggerFromContext(r.Context())
-		if !ok {
-			lg = pkg.DefaultLogger()
-		}
+		const fn string = "AssetDelete"
+		lg := middleware.SetupLoggerFromContext(fn, r)
+
 		assetName, login, err := getAssetNameAndLogin(r)
 		if err != nil {
-			lg.Error("assetPost error getting asset name and login", "error", err)
+			lg.Error("error getting asset name and login", "error", err)
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-		b, err := io.ReadAll(r.Body)
-		if err != nil {
-			lg.Error("assetPost error reading body", "error", err)
-			http.Error(w, "", http.StatusBadRequest)
-			return
-		}
-		if err = db.SetDataByAssetName(r.Context(), assetName, login, r.Header.Get("Content-Type"), b); err != nil {
-			lg.Error("assetPost rror setting data", "error", err)
+		if err = a.db.DeleteDataByAssetName(r.Context(), assetName, login); err != nil {
+			lg.Error("error deleting data", "error", err)
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if _, err = w.Write([]byte("{\"status\":\"ok\"}")); err != nil {
-			lg.Error("assetPost error writing response", "error", err)
+			lg.Error("error writing response", "error", err)
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
+		lg.Info("success", "Login", login, "AssetName", assetName)
 	})
 }
 
-func AssetGet(db storage.Db) http.Handler {
+func (a *AssetHandler) AssetPost() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		lg, ok := authMiddleware.GetLoggerFromContext(r.Context())
-		if !ok {
-			lg = pkg.DefaultLogger()
-		}
+		defer func() { _ = r.Body.Close() }()
+		const fn string = "AssetPost"
+		lg := middleware.SetupLoggerFromContext(fn, r)
+
 		assetName, login, err := getAssetNameAndLogin(r)
 		if err != nil {
-			lg.Error("assetGet error getting asset name and login", "error", err)
+			lg.Error("error getting asset name and login", "error", err)
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-		d, ct, err := db.GetDataByAssetName(r.Context(), assetName, login)
+		b, err := io.ReadAll(r.Body)
 		if err != nil {
-			if errors.Is(err, pkg.ErrNotFound) {
-				lg.Error("assetGet asset name does not exist", "error", err)
+			lg.Error("error reading body", "error", err)
+			http.Error(w, "", http.StatusBadRequest)
+			return
+		}
+		if err = a.db.SetDataByAssetName(r.Context(), assetName, login, r.Header.Get("Content-Type"), b); err != nil {
+			lg.Error("error setting data", "error", err)
+			http.Error(w, "", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if _, err = w.Write([]byte("{\"status\":\"ok\"}")); err != nil {
+			lg.Error("error writing response", "error", err)
+			http.Error(w, "", http.StatusInternalServerError)
+			return
+		}
+		lg.Info("success", "Login", login, "AssetName", assetName)
+	})
+}
+
+func (a *AssetHandler) AssetGet() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const fn string = "AssetGet"
+		lg := middleware.SetupLoggerFromContext(fn, r)
+
+		assetName, login, err := getAssetNameAndLogin(r)
+		if err != nil {
+			lg.Error("error getting asset name and login", "error", err)
+			http.Error(w, "", http.StatusBadRequest)
+			return
+		}
+		d, ct, err := a.db.GetDataByAssetName(r.Context(), assetName, login)
+		if err != nil {
+			var assetErr myerrors.ErrAssetNotFound
+			if errors.As(err, &assetErr) {
+				lg.Error("asset name does not exist",
+					"error", err,
+					"AssetId", assetErr.AssetID,
+					"Login", assetErr.Login,
+				)
 				http.Error(w, "", http.StatusNotFound)
 				return
 			}
-			lg.Error("assetGet error getting asset", "error", err)
+			lg.Error("error getting asset", "error", err)
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
@@ -76,10 +117,11 @@ func AssetGet(db storage.Db) http.Handler {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		}
 		if _, err = w.Write(d); err != nil {
-			lg.Error("assetGet error writing response", "error", err)
+			lg.Error("error writing response", "error", err)
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
+		lg.Info("success", "Login", login, "AssetName", assetName)
 	})
 }
 
@@ -88,9 +130,9 @@ func getAssetNameAndLogin(r *http.Request) (string, string, error) {
 	if err := validateAssetName(assetName); err != nil {
 		return "", "", fmt.Errorf("invalid asset name: %w", err)
 	}
-	login, ok := authMiddleware.GetLoginFromContext(r.Context())
+	login, ok := middleware.GetLoginFromContext(r.Context())
 	if !ok {
-		return "", "", pkg.NewNotFoundError("login not found")
+		return "", "", myerrors.NewNotFoundError("login not found")
 	}
 	return assetName, login, nil
 }
